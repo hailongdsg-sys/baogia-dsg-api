@@ -5,42 +5,19 @@ build_bao_gia.py
 Dien du lieu vao file mau BBG_mau.xlsm de tao bao gia noi that Hoa Phat / The One.
 Dong goi toan bo logic da kiem chung (chen dong khi >3 san pham, dich merged cells
 dung cach, cong thuc tong ket, resize/anchor anh san pham) de goi tu node
-"Execute Command" trong n8n.
+"Execute Command" trong n8n hoac tu API (main.py).
 
 Cach dung:
     python3 build_bao_gia.py --config config.json
 
-File config.json (vi du):
-{
-  "template_path": "/data/templates/BBG_mau.xlsm",
-  "output_path": "/data/output/BG_ChiLan.xlsm",
-  "customer_name": "Chị Lan",
-  "phone": "0901234567",
-  "company": "",
-  "tax_address": "",
-  "delivery_address": "123 Nguyễn Văn A, Q.1, TP.HCM",
-  "mst": "",
-  "email": "",
-  "shipping_fee": 0,
-  "products": [
-    {
-      "code": "X100",
-      "description": "Mo ta san pham lay tu hoaphatsaigon.com",
-      "color": "",
-      "qty": 5,
-      "unit_price": 1500000,
-      "image_path": "/data/images/x100.png"
-    }
-  ]
-}
-
 Ghi chu:
-- Neu san pham co "image_url" thay vi "image_path", script se tu tai anh ve
-  (dung requests - server chay n8n thuong khong bi chan mang nhu sandbox Claude,
-  nen KHONG can chup man hinh + crop nhu quy trinh thu cong).
+- Neu san pham co "image_url" thay vi "image_path", script se tu tai anh ve.
+- Neu KHONG co anh (ca image_path lan image_url deu thieu, hoac tai anh loi),
+  script se BO QUA anh cho dong san pham do va van tiep tuc tao bao gia binh
+  thuong (KHONG dung sys.exit/crash toan bo tien trinh nua - fix quan trong,
+  vi truoc day 1 san pham thieu anh se lam sap toan bo API server).
 - KHONG duoc sua doi cong thuc tren cac o khac ngoai nhung o duoc liet ke trong
-  script nay - day la file .xlsm co san cong thuc VAT/tam ung, sua sai se lam
-  bao gia tinh sai tien.
+  script nay.
 """
 import argparse
 import json
@@ -55,8 +32,8 @@ from openpyxl.utils import range_boundaries, get_column_letter
 
 SHEET_NAME = "BG mau"
 FIRST_PRODUCT_ROW = 18
-DEFAULT_TEMPLATE_ROWS = 3          # so dong san pham co san trong template (18,19,20)
-DEFAULT_TOTAL_START_ROW = 21       # dong "Tong cong" mac dinh khi khong chen them dong
+DEFAULT_TEMPLATE_ROWS = 3
+DEFAULT_TOTAL_START_ROW = 21
 IMG_WIDTH = 140
 IMG_HEIGHT = 146
 ROW_HEIGHT_WITH_IMAGE = 170
@@ -68,20 +45,32 @@ def die(msg):
 
 
 def maybe_download_image(product, tmp_dir):
-    """Neu san pham co image_url thi tai ve, tra ve duong dan file cuc bo."""
     if product.get("image_path"):
         return product["image_path"]
     url = product.get("image_url")
     if not url:
-        die(f"San pham {product.get('code')} khong co image_path lan image_url")
+        print(
+            f"CANH BAO: san pham {product.get('code')} khong co image_path lan "
+            f"image_url - bo qua anh cho dong nay, van tiep tuc tao bao gia.",
+            file=sys.stderr,
+        )
+        return None
     import requests
     os.makedirs(tmp_dir, exist_ok=True)
     fname = os.path.join(tmp_dir, f"{product['code'].replace(' ', '_').replace('/', '_')}.png")
-    resp = requests.get(url, timeout=20)
-    resp.raise_for_status()
-    with open(fname, "wb") as f:
-        f.write(resp.content)
-    return fname
+    try:
+        resp = requests.get(url, timeout=20)
+        resp.raise_for_status()
+        with open(fname, "wb") as f:
+            f.write(resp.content)
+        return fname
+    except Exception as e:
+        print(
+            f"CANH BAO: khong tai duoc anh cho san pham {product.get('code')} "
+            f"tu {url} ({e}) - bo qua anh cho dong nay, van tiep tuc tao bao gia.",
+            file=sys.stderr,
+        )
+        return None
 
 
 def unmerge_all(ws):
@@ -113,7 +102,6 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
     wb = openpyxl.load_workbook(template_path, keep_vba=True)
     ws = wb[SHEET_NAME]
 
-    # --- Thong tin khach hang ---
     phone = config.get("phone", "")
     name_line = f"Kính gửi : {config.get('customer_name', '')}"
     if phone:
@@ -129,16 +117,14 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
     email = config.get("email", "")
     ws["A15"] = f"Điện thoại: {phone}" + " " * 60 + f"Email: {email}"
 
-    insert_at = FIRST_PRODUCT_ROW + DEFAULT_TEMPLATE_ROWS  # = 21
+    insert_at = FIRST_PRODUCT_ROW + DEFAULT_TEMPLATE_ROWS
 
-    # --- Neu can nhieu hon 3 dong, chen them dong truoc khi dien du lieu ---
     if n_products > DEFAULT_TEMPLATE_ROWS:
         n_extra = n_products - DEFAULT_TEMPLATE_ROWS
         old_ranges = unmerge_all(ws)
         ws.insert_rows(insert_at, n_extra)
         remerge_shifted(ws, old_ranges, insert_at, n_extra)
-        # copy dinh dang tu dong san pham cuoi cung co san (dong 20) sang cac dong moi
-        last_existing_row = FIRST_PRODUCT_ROW + DEFAULT_TEMPLATE_ROWS - 1  # = 20
+        last_existing_row = FIRST_PRODUCT_ROW + DEFAULT_TEMPLATE_ROWS - 1
         for new_row in range(insert_at, insert_at + n_extra):
             ws.row_dimensions[new_row].height = ws.row_dimensions[last_existing_row].height
             for c in range(1, 10):
@@ -146,7 +132,6 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
                 dst = ws.cell(row=new_row, column=c)
                 dst._style = copy(src._style)
 
-    # --- Dien du lieu san pham ---
     for idx, product in enumerate(products, start=1):
         row = FIRST_PRODUCT_ROW + idx - 1
         ws.row_dimensions[row].height = ROW_HEIGHT_WITH_IMAGE
@@ -160,27 +145,22 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
         ws[f"I{row}"] = f"=H{row}*G{row}"
 
         img_path = maybe_download_image(product, tmp_dir)
-        img = XLImage(img_path)
-        img.width = IMG_WIDTH
-        img.height = IMG_HEIGHT
-        ws.add_image(img, f"C{row}")
+        if img_path:
+            img = XLImage(img_path)
+            img.width = IMG_WIDTH
+            img.height = IMG_HEIGHT
+            ws.add_image(img, f"C{row}")
 
-    # --- Neu it hon 3 san pham, xoa sach cac dong con du trong template ---
     if n_products < DEFAULT_TEMPLATE_ROWS:
         for row in range(FIRST_PRODUCT_ROW + n_products, FIRST_PRODUCT_ROW + DEFAULT_TEMPLATE_ROWS):
             for col in ("A", "B", "D", "E", "F", "G", "H"):
                 ws[f"{col}{row}"] = None
-            # KHONG xoa cong thuc I{row} = H*G, de nguyen se tu ra 0 vi H,G rong
 
-    # --- Cong thuc khu vuc tong ket ---
     shipping_fee = config.get("shipping_fee", 0)
     if n_products <= DEFAULT_TEMPLATE_ROWS:
-        # Khong chen dong -> giu nguyen vi tri cong thuc mac dinh cua template
-        last_product_row = FIRST_PRODUCT_ROW + DEFAULT_TEMPLATE_ROWS - 1  # 20
-        ws["I24"] = shipping_fee  # "Phi van chuyen va lap dat" o vi tri goc
-        # cac cong thuc I21,I23,I25..I29 giu nguyen nhu template, khong dong vao
+        ws["I24"] = shipping_fee
     else:
-        total_start = FIRST_PRODUCT_ROW + n_products  # dong "Tong cong" sau khi chen
+        total_start = FIRST_PRODUCT_ROW + n_products
         last_product_row = FIRST_PRODUCT_ROW + n_products - 1
         r_tong_cong = total_start
         r_chiet_khau = total_start + 1
@@ -204,20 +184,19 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
     os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
     wb.save(output_path)
 
-    # --- Kiem tra khong lam mat anh goc cua template ---
     n_media = len([n for n in zipfile.ZipFile(output_path).namelist() if "media" in n])
     print(f"Da luu: {output_path}")
-    print(f"So luong anh (media) trong file: {n_media} (phai >= 29 + {n_products} neu template goc co 29 anh trang tri)")
+    print(f"So luong anh (media) trong file: {n_media}")
     if n_media < 29:
-        print("CANH BAO: so luong anh thap bat thuong - co the da mat anh goc cua template!", file=sys.stderr)
+        print("CANH BAO: so luong anh thap bat thuong!", file=sys.stderr)
 
     return output_path
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", required=True, help="Duong dan file JSON config")
-    ap.add_argument("--tmp-dir", default="/tmp/bao_gia_images", help="Thu muc tam de tai anh san pham")
+    ap.add_argument("--config", required=True)
+    ap.add_argument("--tmp-dir", default="/tmp/bao_gia_images")
     args = ap.parse_args()
 
     with open(args.config, "r", encoding="utf-8") as f:
