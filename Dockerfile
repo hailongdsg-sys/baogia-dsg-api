@@ -1,6 +1,5 @@
 FROM python:3.11-slim
 
-# LibreOffice de convert .xlsm -> .pdf, fonts de hien thi dung tieng Viet
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libreoffice \
     fonts-dejavu-core \
@@ -14,9 +13,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY build_bao_gia.py .
 COPY main.py .
-COPY templates/ templates/
+COPY BBG_mau.xlsm .
 
-ENV TEMPLATE_PATH=/app/templates/BBG_mau.xlsm
+ENV TEMPLATE_PATH=/app/BBG_mau.xlsm
 ENV PORT=8000
 
 EXPOSE 8000
