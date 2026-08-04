@@ -20,16 +20,19 @@ Endpoint:
       "mst": "",
       "email": "",
       "shipping_fee": 0,
-      "format": "pdf",   // hoac "xlsm" neu muon lay file Excel goc
+      "format": "pdf",   // hoac "xlsm" neu muon lay file Excel goc, hoac "both"
+                          // de lay CA HAI (tra ve JSON co pdf_base64/xlsm_base64)
       "products": [
         {"code": "X100", "description": "...", "color": "", "qty": 5,
          "unit_price": 1500000, "image_url": "https://..."}
       ]
     }
-    Response: file nhi phan (PDF hoac xlsm) tra thang trong body.
+    Response: file nhi phan (PDF hoac xlsm) tra thang trong body, hoac JSON
+    (neu format="both") gom pdf_base64 + xlsm_base64.
 
     GET /health -> {"status": "ok"}
 """
+import base64
 import os
 import re
 import subprocess
@@ -37,7 +40,7 @@ import unicodedata
 import uuid
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 from build_bao_gia import build
 
@@ -100,17 +103,20 @@ async def build_quote(request: Request):
         raise HTTPException(status_code=500, detail=f"Loi khi tao file bao gia: {e}")
 
     fmt = (payload.get("format") or "pdf").lower()
+    safe_name = ascii_filename(payload["customer_name"])
 
     if fmt == "xlsm":
         with open(xlsm_path, "rb") as f:
             data = f.read()
-        safe_name = ascii_filename(payload["customer_name"])
         return Response(
             content=data,
             media_type="application/vnd.ms-excel.sheet.macroEnabled.12",
             headers={"Content-Disposition": f'attachment; filename="BG_{safe_name}.xlsm"'},
         )
 
+    # fmt == "pdf" hoac fmt == "both" deu can convert PDF (giu nguyen hanh vi cu
+    # cho "pdf"; "both" tra ve CA HAI file trong 1 response JSON de n8n khong
+    # can goi API 2 lan hay dung them node Merge).
     result = subprocess.run(
         ["soffice", "--headless", "--convert-to", "pdf", "--outdir", work_dir, xlsm_path],
         capture_output=True,
@@ -127,7 +133,18 @@ async def build_quote(request: Request):
     with open(pdf_path, "rb") as f:
         pdf_bytes = f.read()
 
-    safe_name = ascii_filename(payload["customer_name"])
+    if fmt == "both":
+        with open(xlsm_path, "rb") as f:
+            xlsm_bytes = f.read()
+        return JSONResponse(content={
+            "customer_name": payload.get("customer_name", ""),
+            "chat_id": payload.get("chat_id"),
+            "pdf_filename": f"BG_{safe_name}.pdf",
+            "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
+            "xlsm_filename": f"BG_{safe_name}.xlsm",
+            "xlsm_base64": base64.b64encode(xlsm_bytes).decode("ascii"),
+        })
+
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
