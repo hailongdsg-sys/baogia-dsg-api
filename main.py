@@ -90,6 +90,7 @@ async def build_quote(request: Request):
         "mst": payload.get("mst", ""),
         "email": payload.get("email", ""),
         "shipping_fee": payload.get("shipping_fee", 0),
+        "discount_percent": payload.get("discount_percent", 0),
         "products": products,
     }
 
