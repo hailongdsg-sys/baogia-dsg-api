@@ -22,6 +22,7 @@ File config.json (vi du):
   "mst": "",
   "email": "",
   "shipping_fee": 0,
+  "discount_percent": 0,
   "products": [
     {
       "code": "X100",
@@ -42,6 +43,8 @@ Ghi chu:
   script se BO QUA anh cho dong san pham do va van tiep tuc tao bao gia binh
   thuong (KHONG dung sys.exit/crash toan bo tien trinh nua - fix quan trong,
   vi truoc day 1 san pham thieu anh se lam sap toan bo API server).
+- discount_percent (vi du 2 = giam 2%) se duoc dien vao o "Chiet khau" duoi
+  dang cong thuc =Tong_cong*X%, tu tinh lai neu tong cong thay doi.
 - KHONG duoc sua doi cong thuc tren cac o khac ngoai nhung o duoc liet ke trong
   script nay - day la file .xlsm co san cong thuc VAT/tam ung, sua sai se lam
   bao gia tinh sai tien.
@@ -271,6 +274,7 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
     # chen/xoa dong, khong con nhanh dac biet nua (vi gio luon xoa hoac chen dong
     # cho khop dung n_products, khong con truong hop "dong rong con lai" nua) ---
     shipping_fee = config.get("shipping_fee", 0)
+    discount_percent = config.get("discount_percent", 0) or 0
     total_start = FIRST_PRODUCT_ROW + n_products  # dong "Tong cong"
     last_product_row = FIRST_PRODUCT_ROW + n_products - 1
     r_tong_cong = total_start
@@ -284,6 +288,13 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
     r_con_lai = total_start + 8
 
     ws[f"I{r_tong_cong}"] = f"=SUM(I{FIRST_PRODUCT_ROW}:I{last_product_row})"
+    # Chiet khau: neu co discount_percent thi dien cong thuc =Tong_cong*X%
+    # (tu dong tinh lai theo tong cong, giong cach lam voi VAT/tam ung o duoi),
+    # neu khong thi de 0 (giu nguyen hanh vi cu).
+    if discount_percent:
+        ws[f"I{r_chiet_khau}"] = f"=I{r_tong_cong}*{discount_percent}%"
+    else:
+        ws[f"I{r_chiet_khau}"] = 0
     ws[f"I{r_gia_tri_con_lai}"] = f"=I{r_tong_cong}-I{r_chiet_khau}"
     ws[f"I{r_phi_vc}"] = shipping_fee
     ws[f"I{r_tong_cong_vc}"] = f"=I{r_gia_tri_con_lai}+I{r_phi_vc}"
