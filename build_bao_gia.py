@@ -55,7 +55,10 @@ from copy import copy
 
 import openpyxl
 from openpyxl.drawing.image import Image as XLImage
-from openpyxl.utils import range_boundaries, get_column_letter
+from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
+from openpyxl.drawing.xdr import XDRPositiveSize2D
+from openpyxl.utils.units import pixels_to_EMU
+from openpyxl.utils import range_boundaries, get_column_letter, column_index_from_string
 
 SHEET_NAME = "BG mau"
 FIRST_PRODUCT_ROW = 18
@@ -103,6 +106,34 @@ def maybe_download_image(product, tmp_dir):
             file=sys.stderr,
         )
         return None
+
+
+def add_centered_image(ws, img_path, row, col_letter, img_width_px, img_height_px, row_height_pts):
+    """Chen anh vao giua o (ca chieu ngang va chieu doc), thay vi mac dinh
+    openpyxl neo anh o goc tren-trai cua o. Tinh do lech (offset) dua tren do
+    rong cot (doi tu don vi "ky tu" cua Excel sang pixel) va chieu cao dong."""
+    img = XLImage(img_path)
+    img.width = img_width_px
+    img.height = img_height_px
+
+    col_dim = ws.column_dimensions.get(col_letter)
+    col_width_chars = col_dim.width if col_dim and col_dim.width else 22.43
+    col_width_px = col_width_chars * 7 + 5
+    row_height_px = row_height_pts * 96 / 72
+
+    off_x_px = max(0, (col_width_px - img_width_px) / 2)
+    off_y_px = max(0, (row_height_px - img_height_px) / 2)
+
+    col_idx0 = column_index_from_string(col_letter) - 1  # openpyxl AnchorMarker: 0-indexed
+    row_idx0 = row - 1
+
+    marker = AnchorMarker(
+        col=col_idx0, colOff=pixels_to_EMU(off_x_px),
+        row=row_idx0, rowOff=pixels_to_EMU(off_y_px),
+    )
+    size = XDRPositiveSize2D(pixels_to_EMU(img_width_px), pixels_to_EMU(img_height_px))
+    img.anchor = OneCellAnchor(_from=marker, ext=size)
+    ws.add_image(img)
 
 
 def unmerge_all(ws):
@@ -234,10 +265,7 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
 
         img_path = maybe_download_image(product, tmp_dir)
         if img_path:
-            img = XLImage(img_path)
-            img.width = IMG_WIDTH
-            img.height = IMG_HEIGHT
-            ws.add_image(img, f"C{row}")
+            add_centered_image(ws, img_path, row, "C", IMG_WIDTH, IMG_HEIGHT, ROW_HEIGHT_WITH_IMAGE)
 
     # --- Cong thuc khu vuc tong ket - LUON tinh dong theo vi tri thuc te sau khi
     # chen/xoa dong, khong con nhanh dac biet nua (vi gio luon xoa hoac chen dong
