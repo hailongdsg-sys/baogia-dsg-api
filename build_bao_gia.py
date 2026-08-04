@@ -112,15 +112,52 @@ def unmerge_all(ws):
     return ranges
 
 
+def new_row_after_splice(old_row, threshold_row, shift):
+    """Tinh vi tri dong moi sau khi chen (shift > 0) hoac xoa (shift < 0) dong
+    tai threshold_row. Voi truong hop xoa, vung bi xoa la
+    [threshold_row + shift, threshold_row - 1] (shift la so am) - tra ve None
+    neu dong do nam trong vung bi xoa (khong con ton tai nua)."""
+    if shift >= 0:
+        return old_row + shift if old_row >= threshold_row else old_row
+    delete_start = threshold_row + shift
+    if old_row < delete_start:
+        return old_row
+    if old_row < threshold_row:
+        return None
+    return old_row + shift
+
+
 def remerge_shifted(ws, old_ranges, threshold_row, shift):
     """shift duong: chen them dong. shift am: xoa bot dong."""
     for r in old_ranges:
         min_col, min_row, max_col, max_row = range_boundaries(r)
-        if min_row >= threshold_row:
-            min_row += shift
-            max_row += shift
-        new_range = f"{get_column_letter(min_col)}{min_row}:{get_column_letter(max_col)}{max_row}"
+        new_min_row = new_row_after_splice(min_row, threshold_row, shift)
+        new_max_row = new_row_after_splice(max_row, threshold_row, shift)
+        if new_min_row is None or new_max_row is None:
+            continue  # dong bi xoa, khong re-merge nua
+        new_range = f"{get_column_letter(min_col)}{new_min_row}:{get_column_letter(max_col)}{new_max_row}"
         ws.merge_cells(new_range)
+
+
+def shift_row_heights(ws, old_heights, threshold_row, shift):
+    """openpyxl KHONG tu dong dich chuyen row_dimensions (chieu cao dong) khi
+    chen/xoa dong bang insert_rows/delete_rows - chi dich chuyen gia tri o va
+    KHONG dich merged cells (da xu ly rieng o remerge_shifted). Ham nay dich
+    chuyen chieu cao dong tuong ung, tranh tinh trang dong "Tong cong"/"Chiet
+    khau" bi ke thua nham chieu cao cao cua dong san pham (anh) sau khi xoa."""
+    new_heights = {}
+    for old_row, h in old_heights.items():
+        new_row = new_row_after_splice(old_row, threshold_row, shift)
+        if new_row is None:
+            continue  # dong nay da bi xoa, bo qua
+        new_heights[new_row] = h
+
+    # Xoa het custom height hien tai (co the con sot lai gia tri cu sai vi tri)
+    for row_idx in list(ws.row_dimensions.keys()):
+        ws.row_dimensions[row_idx].height = None
+
+    for row_idx, h in new_heights.items():
+        ws.row_dimensions[row_idx].height = h
 
 
 def build(config, tmp_dir="/tmp/bao_gia_images"):
@@ -157,6 +194,9 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
     # de khong con dong san pham rong hien thi tren PDF ---
     if n_products != DEFAULT_TEMPLATE_ROWS:
         old_ranges = unmerge_all(ws)
+        old_heights = {
+            r: dim.height for r, dim in ws.row_dimensions.items() if dim.height is not None
+        }
         if n_products > DEFAULT_TEMPLATE_ROWS:
             n_diff = n_products - DEFAULT_TEMPLATE_ROWS
             ws.insert_rows(boundary_row, n_diff)
@@ -177,6 +217,7 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
             ws.delete_rows(delete_at, n_diff)
             shift = -n_diff
         remerge_shifted(ws, old_ranges, boundary_row, shift)
+        shift_row_heights(ws, old_heights, boundary_row, shift)
 
     # --- Dien du lieu san pham ---
     for idx, product in enumerate(products, start=1):
