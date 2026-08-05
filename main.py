@@ -20,15 +20,13 @@ Endpoint:
       "mst": "",
       "email": "",
       "shipping_fee": 0,
-      "format": "pdf",   // hoac "xlsm" neu muon lay file Excel goc, hoac "both"
-                          // de lay CA HAI (tra ve JSON co pdf_base64/xlsm_base64)
+      "format": "pdf",   // hoac "xlsm" neu muon lay file Excel goc
       "products": [
         {"code": "X100", "description": "...", "color": "", "qty": 5,
          "unit_price": 1500000, "image_url": "https://..."}
       ]
     }
-    Response: file nhi phan (PDF hoac xlsm) tra thang trong body, hoac JSON
-    (neu format="both") gom pdf_base64 + xlsm_base64.
+    Response: file nhi phan (PDF hoac xlsm) tra thang trong body.
 
     GET /health -> {"status": "ok"}
 """
@@ -38,6 +36,7 @@ import re
 import subprocess
 import unicodedata
 import uuid
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
@@ -47,6 +46,8 @@ from build_bao_gia import build
 app = FastAPI(title="Bao Gia Hoa Phat API")
 
 TEMPLATE_PATH = os.environ.get("TEMPLATE_PATH", "/app/templates/BBG_mau.xlsm")
+
+DEFAULT_DELIVERY_ADDRESS = "Nội thành TP. HCM"
 
 
 def ascii_filename(name: str) -> str:
@@ -58,6 +59,17 @@ def ascii_filename(name: str) -> str:
     ascii_only = re.sub(r"\s+", "_", ascii_only.strip())
     ascii_only = re.sub(r"[^A-Za-z0-9_\-]", "", ascii_only)
     return ascii_only or "KhachHang"
+
+
+def build_filename_base(customer_name: str, company: str) -> str:
+    """Ten file dang: DD.MM.YY_BG_<ten khach hang>_<ten cty> (bo phan cty neu
+    khong co). Dung gio VN (UTC+7) vi server (Render) thuong chay theo gio UTC."""
+    now_vn = datetime.utcnow() + timedelta(hours=7)
+    date_str = now_vn.strftime("%d.%m.%y")
+    parts = [ascii_filename(customer_name)]
+    if company:
+        parts.append(ascii_filename(company))
+    return f"{date_str}_BG_" + "_".join(parts)
 
 
 @app.get("/health")
@@ -74,8 +86,14 @@ async def build_quote(request: Request):
         raise HTTPException(status_code=400, detail="products rong - can it nhat 1 san pham")
     if not payload.get("customer_name"):
         raise HTTPException(status_code=400, detail="thieu customer_name")
-    if not payload.get("delivery_address"):
-        raise HTTPException(status_code=400, detail="thieu delivery_address")
+
+    # Dia chi giao hang: neu khong duoc cung cap, dung dia chi thue thay the;
+    # neu ca dia chi giao hang lan dia chi thue (tuc la khong co MST) deu
+    # khong co, mac dinh la "Noi thanh TP. HCM" thay vi bat loi 400 nhu truoc.
+    tax_address = payload.get("tax_address", "") or ""
+    delivery_address = payload.get("delivery_address", "") or ""
+    if not delivery_address:
+        delivery_address = tax_address or DEFAULT_DELIVERY_ADDRESS
 
     request_id = uuid.uuid4().hex[:10]
     work_dir = f"/tmp/bao_gia_{request_id}"
@@ -88,8 +106,8 @@ async def build_quote(request: Request):
         "customer_name": payload.get("customer_name", ""),
         "phone": payload.get("phone", ""),
         "company": payload.get("company", ""),
-        "tax_address": payload.get("tax_address", ""),
-        "delivery_address": payload.get("delivery_address", ""),
+        "tax_address": tax_address,
+        "delivery_address": delivery_address,
         "mst": payload.get("mst", ""),
         "email": payload.get("email", ""),
         "shipping_fee": payload.get("shipping_fee", 0),
@@ -103,7 +121,7 @@ async def build_quote(request: Request):
         raise HTTPException(status_code=500, detail=f"Loi khi tao file bao gia: {e}")
 
     fmt = (payload.get("format") or "pdf").lower()
-    safe_name = ascii_filename(payload["customer_name"])
+    filename_base = build_filename_base(payload["customer_name"], payload.get("company", ""))
 
     if fmt == "xlsm":
         with open(xlsm_path, "rb") as f:
@@ -111,7 +129,7 @@ async def build_quote(request: Request):
         return Response(
             content=data,
             media_type="application/vnd.ms-excel.sheet.macroEnabled.12",
-            headers={"Content-Disposition": f'attachment; filename="BG_{safe_name}.xlsm"'},
+            headers={"Content-Disposition": f'attachment; filename="{filename_base}.xlsm"'},
         )
 
     # fmt == "pdf" hoac fmt == "both" deu can convert PDF (giu nguyen hanh vi cu
@@ -139,14 +157,14 @@ async def build_quote(request: Request):
         return JSONResponse(content={
             "customer_name": payload.get("customer_name", ""),
             "chat_id": payload.get("chat_id"),
-            "pdf_filename": f"BG_{safe_name}.pdf",
+            "pdf_filename": f"{filename_base}.pdf",
             "pdf_base64": base64.b64encode(pdf_bytes).decode("ascii"),
-            "xlsm_filename": f"BG_{safe_name}.xlsm",
+            "xlsm_filename": f"{filename_base}.xlsm",
             "xlsm_base64": base64.b64encode(xlsm_bytes).decode("ascii"),
         })
 
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="BG_{safe_name}.pdf"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename_base}.pdf"'},
     )
