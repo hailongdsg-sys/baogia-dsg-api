@@ -52,12 +52,15 @@ DEFAULT_DELIVERY_ADDRESS = "Nội thành TP. HCM"
 
 def ascii_filename(name: str) -> str:
     """Bo dau tieng Viet va ky tu khong phai ASCII de dung an toan trong
-    HTTP header Content-Disposition (header chi cho phep latin-1)."""
+    HTTP header Content-Disposition (header chi cho phep latin-1). Giu nguyen
+    khoang trang (space) thay vi doi thanh dau "_" - chi gom nhieu khoang
+    trang lien tiep thanh 1, va bo cac ky tu khong hop le cho ten file
+    (/, \\, :, *, ?, ", <, >, | ...)."""
     normalized = unicodedata.normalize("NFKD", name)
     ascii_only = normalized.encode("ascii", "ignore").decode("ascii")
     ascii_only = ascii_only.replace("đ", "d").replace("Đ", "D")
-    ascii_only = re.sub(r"\s+", "_", ascii_only.strip())
-    ascii_only = re.sub(r"[^A-Za-z0-9_\-]", "", ascii_only)
+    ascii_only = re.sub(r"\s+", " ", ascii_only.strip())
+    ascii_only = re.sub(r"[^A-Za-z0-9_\- ]", "", ascii_only)
     return ascii_only or "KhachHang"
 
 
