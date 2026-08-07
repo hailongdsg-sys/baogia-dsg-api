@@ -208,9 +208,16 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
 
     # --- Thong tin khach hang ---
     phone = config.get("phone", "")
-    name_line = f"Kính gửi : {config.get('customer_name', '')}"
-    if phone:
-        name_line += f" - {phone}"
+    customer_name = config.get("customer_name", "")
+    if customer_name:
+        name_line = f"Kính gửi : {customer_name}"
+        if phone:
+            name_line += f" - {phone}"
+    else:
+        # Khong co ten khach (vd khach chi dua MST + dia chi + san pham) -> de trong
+        # phan sau nhan, KHONG ghep so dien thoai vao day (so dien thoai da co rieng
+        # o dong "Dien thoai:" ben duoi).
+        name_line = "Kính gửi :"
     ws["A10"] = name_line
     if config.get("company"):
         ws["A11"] = f"Công Ty: {config['company']}"
@@ -289,12 +296,19 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
 
     ws[f"I{r_tong_cong}"] = f"=SUM(I{FIRST_PRODUCT_ROW}:I{last_product_row})"
     # Chiet khau: neu co discount_percent thi dien cong thuc =Tong_cong*X%
-    # (tu dong tinh lai theo tong cong, giong cach lam voi VAT/tam ung o duoi),
-    # neu khong thi de 0 (giu nguyen hanh vi cu).
+    # (tu dong tinh lai theo tong cong, giong cach lam voi VAT/tam ung o duoi)
+    # va HIEN 2 dong nay; neu khong co chiet khau thi AN (hidden) han 2 dong
+    # "Chiet khau" va "Gia tri con lai" theo yeu cau - cong thuc ben duoi van
+    # giu nguyen (Gia tri con lai = Tong cong - 0 = Tong cong) nen khong pha
+    # cac cong thuc VAT/tam ung phia sau, chi la khong hien thi tren PDF.
     if discount_percent:
         ws[f"I{r_chiet_khau}"] = f"=I{r_tong_cong}*{discount_percent}%"
+        ws.row_dimensions[r_chiet_khau].hidden = False
+        ws.row_dimensions[r_gia_tri_con_lai].hidden = False
     else:
         ws[f"I{r_chiet_khau}"] = 0
+        ws.row_dimensions[r_chiet_khau].hidden = True
+        ws.row_dimensions[r_gia_tri_con_lai].hidden = True
     ws[f"I{r_gia_tri_con_lai}"] = f"=I{r_tong_cong}-I{r_chiet_khau}"
     ws[f"I{r_phi_vc}"] = shipping_fee
     ws[f"I{r_tong_cong_vc}"] = f"=I{r_gia_tri_con_lai}+I{r_phi_vc}"
