@@ -71,6 +71,71 @@ IMG_WIDTH = 140
 IMG_HEIGHT = 146
 ROW_HEIGHT_WITH_IMAGE = 170
 
+# --- Tu dong chinh chieu cao dong cho khu vuc thong tin khach hang (dong 10-14:
+# Kinh gui/Cong ty/Dia chi thue/Dia chi giao hang/MST) - cac o nay wrap_text=True
+# nhung template co san CHI CO CHIEU CAO 1 DONG CO DINH, nen khi noi dung dai
+# (vd dia chi thue day du) se bi wrap xuong 2-3 dong nhung dong bi cat/de len
+# nhau tren PDF. Uoc luong so dong can thiet bang do do rong chu that su (Pillow)
+# roi nhan len theo BASE_ROW_HEIGHT.
+BASE_ROW_HEIGHT = 15.0
+INFO_ROW_FONT_SIZE = 11
+_FONT_CANDIDATES = [
+    "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+    "/usr/share/fonts/truetype/liberation2/LiberationSerif-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+]
+
+
+def _load_bold_font(size_px):
+    from PIL import ImageFont
+    for path in _FONT_CANDIDATES:
+        try:
+            return ImageFont.truetype(path, size_px)
+        except Exception:
+            continue
+    return None
+
+
+def _merged_width_px(ws, cols):
+    """Uoc luong be rong (px) cua vung merge gom cac cot trong `cols`, dung cung
+    cong thuc quy doi "do rong Excel (ky tu)" -> pixel da dung cho anh san pham
+    (width_chars * 7 + 5)."""
+    total_chars = 0.0
+    for col in cols:
+        dim = ws.column_dimensions.get(col)
+        total_chars += dim.width if dim and dim.width else 8.43
+    return total_chars * 7 + 5
+
+
+def _count_wrapped_lines(text, font_size_pt, max_width_px):
+    if not text:
+        return 1
+    font = _load_bold_font(round(font_size_pt * 96 / 72))
+    if font is None:
+        # Phuong an du phong neu khong tim thay font (khong nen xay ra vi
+        # Dockerfile da cai fonts-liberation) - uoc luong ~90 ky tu/dong.
+        return max(1, -(-len(text) // 90))
+    words = text.split(" ")
+    lines = 1
+    cur = ""
+    for w in words:
+        trial = (cur + " " + w).strip()
+        width = font.getlength(trial) if hasattr(font, "getlength") else font.getsize(trial)[0]
+        if cur and width > max_width_px:
+            lines += 1
+            cur = w
+        else:
+            cur = trial
+    return lines
+
+
+def set_wrapped_row_height(ws, row, text, cols="ABCDEF", font_size_pt=INFO_ROW_FONT_SIZE):
+    """Dat lai chieu cao dong `row` sao cho du hien thi het `text` sau khi wrap
+    trong vung merge `cols`, tranh bi cat/de chong len dong ben duoi."""
+    max_width_px = max(20, _merged_width_px(ws, cols) - 10)  # tru le trong o
+    n_lines = _count_wrapped_lines(text, font_size_pt, max_width_px)
+    ws.row_dimensions[row].height = BASE_ROW_HEIGHT * max(1, n_lines)
+
 
 def die(msg):
     """Chi dung cho loi nghiem trong KHONG THE tiep tuc (vi du: thieu template,
@@ -219,13 +284,22 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
         # o dong "Dien thoai:" ben duoi).
         name_line = "Kính gửi :"
     ws["A10"] = name_line
+    set_wrapped_row_height(ws, 10, name_line)
     if config.get("company"):
-        ws["A11"] = f"Công Ty: {config['company']}"
+        company_line = f"Công Ty: {config['company']}"
+        ws["A11"] = company_line
+        set_wrapped_row_height(ws, 11, company_line)
     if config.get("tax_address"):
-        ws["A12"] = f"Địa chỉ thuế: {config['tax_address']}"
-    ws["A13"] = f"Địa chỉ giao hàng: {config.get('delivery_address', '')}"
+        tax_line = f"Địa chỉ thuế: {config['tax_address']}"
+        ws["A12"] = tax_line
+        set_wrapped_row_height(ws, 12, tax_line)
+    delivery_line = f"Địa chỉ giao hàng: {config.get('delivery_address', '')}"
+    ws["A13"] = delivery_line
+    set_wrapped_row_height(ws, 13, delivery_line)
     if config.get("mst"):
-        ws["A14"] = f"MST: {config['mst']}"
+        mst_line = f"MST: {config['mst']}"
+        ws["A14"] = mst_line
+        set_wrapped_row_height(ws, 14, mst_line)
     email = config.get("email", "")
     ws["A15"] = f"Điện thoại: {phone}" + " " * 60 + f"Email: {email}"
 
