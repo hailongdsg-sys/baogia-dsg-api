@@ -65,14 +65,15 @@ def ascii_filename(name: str) -> str:
 
 
 def build_filename_base(customer_name: str, company: str) -> str:
-    """Ten file dang: DD.MM.YY_BG_<ten khach hang>_<ten cty> (bo phan cty neu
-    khong co). Dung gio VN (UTC+7) vi server (Render) thuong chay theo gio UTC."""
+    """Ten file dang: DD.MM.YY_BG_<ten khach hang> - tieng Viet khong dau, GON
+    (khong gom ten cong ty nua vi ten cty thuong rat dai, lam ten file bi cat
+    ngan/hien thi loi tren Telegram, vd "...NG_MAI...". Neu khong co ten khach
+    (truong hop chi co MST) thi dung ten cong ty thay the. Dung gio VN (UTC+7)
+    vi server (Render) thuong chay theo gio UTC."""
     now_vn = datetime.utcnow() + timedelta(hours=7)
     date_str = now_vn.strftime("%d.%m.%y")
-    parts = [ascii_filename(customer_name)]
-    if company:
-        parts.append(ascii_filename(company))
-    return f"{date_str}_BG_" + "_".join(parts)
+    name_part = ascii_filename(customer_name) if customer_name else ascii_filename(company)
+    return f"{date_str}_BG_{name_part}"
 
 
 @app.get("/health")
@@ -87,8 +88,9 @@ async def build_quote(request: Request):
     products = payload.get("products") or []
     if not products:
         raise HTTPException(status_code=400, detail="products rong - can it nhat 1 san pham")
-    if not payload.get("customer_name"):
-        raise HTTPException(status_code=400, detail="thieu customer_name")
+    # Khong con bat buoc customer_name nua - neu khach khong cho ten (vd chi dua
+    # MST + dia chi + san pham), van tao bao gia binh thuong, chi de trong phan
+    # "Kinh gui" (xem build_bao_gia.py).
 
     # Dia chi giao hang: neu khong duoc cung cap, dung dia chi thue thay the;
     # neu ca dia chi giao hang lan dia chi thue (tuc la khong co MST) deu
@@ -124,7 +126,7 @@ async def build_quote(request: Request):
         raise HTTPException(status_code=500, detail=f"Loi khi tao file bao gia: {e}")
 
     fmt = (payload.get("format") or "pdf").lower()
-    filename_base = build_filename_base(payload["customer_name"], payload.get("company", ""))
+    filename_base = build_filename_base(payload.get("customer_name", ""), payload.get("company", ""))
 
     if fmt == "xlsm":
         with open(xlsm_path, "rb") as f:
