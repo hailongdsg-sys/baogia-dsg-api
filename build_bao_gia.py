@@ -52,11 +52,14 @@ Ghi chu:
 import argparse
 import json
 import os
+import re
 import sys
 import zipfile
 from copy import copy
 
 import openpyxl
+from openpyxl.cell.rich_text import CellRichText, TextBlock
+from openpyxl.cell.text import InlineFont
 from openpyxl.drawing.image import Image as XLImage
 from openpyxl.drawing.spreadsheet_drawing import OneCellAnchor, AnchorMarker
 from openpyxl.drawing.xdr import XDRPositiveSize2D
@@ -135,6 +138,29 @@ def set_wrapped_row_height(ws, row, text, cols="ABCDEF", font_size_pt=INFO_ROW_F
     max_width_px = max(20, _merged_width_px(ws, cols) - 10)  # tru le trong o
     n_lines = _count_wrapped_lines(text, font_size_pt, max_width_px)
     ws.row_dimensions[row].height = BASE_ROW_HEIGHT * max(1, n_lines)
+
+
+def standardize_availability_note(raw):
+    """Chuan hoa ghi chu tinh trang hang (co san / dat san xuat) tu text tho
+    nguoi dung nhap (vd tren Telegram: "co san", "6-9 ngay") thanh 1 cau hoan
+    chinh de chen vao cuoi o "CHI TIET SAN PHAM" (cach dong, chu do, in nghieng
+    - xem TextBlock o cho goi ham nay). Tra ve chuoi rong neu raw rong."""
+    if not raw:
+        return ""
+    text = str(raw).strip()
+    if not text:
+        return ""
+    if re.search(r"c[óo]\s*s[ẵa]n", text, re.IGNORECASE):
+        return "Hàng có sẵn - giao hàng sau 1-2 ngày kể từ thời điểm xác nhận đơn hàng."
+    m = re.search(r"(\d+)\s*-\s*(\d+)\s*ng[àa]y", text, re.IGNORECASE)
+    if m:
+        return f"Hàng đặt sản xuất {m.group(1)}-{m.group(2)} ngày làm việc"
+    m2 = re.search(r"(\d+)\s*ng[àa]y", text, re.IGNORECASE)
+    if m2:
+        return f"Hàng đặt sản xuất {m2.group(1)} ngày làm việc"
+    # Khong nhan dang duoc mau "co san" / "X ngay" / "X-Y ngay" -> giu nguyen
+    # text nguoi dung nhap, van in do+nghieng de nguoi xem chu y kiem tra lai.
+    return text
 
 
 def die(msg):
@@ -340,7 +366,16 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
         ws.row_dimensions[row].height = ROW_HEIGHT_WITH_IMAGE
         ws[f"A{row}"] = idx
         ws[f"B{row}"] = product["code"]
-        ws[f"D{row}"] = product.get("description", "")
+        desc_text = product.get("description", "")
+        note_text = standardize_availability_note(product.get("availability_note", ""))
+        if note_text:
+            # Cach 1 dong trong, chu do + in nghieng cho phan ghi chu tinh
+            # trang hang (co san / dat san xuat) - dung rich text vi phan mo
+            # ta san pham van giu font/mau binh thuong.
+            note_font = InlineFont(i=True, color="FFFF0000")
+            ws[f"D{row}"] = CellRichText(desc_text, "\n\n", TextBlock(note_font, note_text))
+        else:
+            ws[f"D{row}"] = desc_text
         ws[f"E{row}"] = product.get("color", "")
         ws[f"F{row}"] = "cái"
         ws[f"G{row}"] = product["qty"]
