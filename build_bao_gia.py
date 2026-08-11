@@ -82,21 +82,38 @@ ROW_HEIGHT_WITH_IMAGE = 170
 # roi nhan len theo BASE_ROW_HEIGHT.
 BASE_ROW_HEIGHT = 15.0
 INFO_ROW_FONT_SIZE = 11
-_FONT_CANDIDATES = [
-    "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
-    "/usr/share/fonts/truetype/liberation2/LiberationSerif-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
-]
+_FONT_CANDIDATES = {
+    "bold": [
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSerif-Bold.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf",
+    ],
+    "regular": [
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Regular.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSerif-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif.ttf",
+    ],
+    "italic": [
+        "/usr/share/fonts/truetype/liberation/LiberationSerif-Italic.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSerif-Italic.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSerif-Italic.ttf",
+    ],
+}
 
 
-def _load_bold_font(size_px):
+def _load_font(style, size_px):
+    """style: 'bold' | 'regular' | 'italic'."""
     from PIL import ImageFont
-    for path in _FONT_CANDIDATES:
+    for path in _FONT_CANDIDATES.get(style, []):
         try:
             return ImageFont.truetype(path, size_px)
         except Exception:
             continue
     return None
+
+
+def _load_bold_font(size_px):
+    return _load_font("bold", size_px)
 
 
 def _merged_width_px(ws, cols):
@@ -110,13 +127,11 @@ def _merged_width_px(ws, cols):
     return total_chars * 7 + 5
 
 
-def _count_wrapped_lines(text, font_size_pt, max_width_px):
+def _wrap_line_count(text, font, max_width_px):
+    """Dem so dong can thiet cho 1 DOAN (khong chua "\\n") sau khi wrap theo tu."""
     if not text:
         return 1
-    font = _load_bold_font(round(font_size_pt * 96 / 72))
     if font is None:
-        # Phuong an du phong neu khong tim thay font (khong nen xay ra vi
-        # Dockerfile da cai fonts-liberation) - uoc luong ~90 ky tu/dong.
         return max(1, -(-len(text) // 90))
     words = text.split(" ")
     lines = 1
@@ -132,12 +147,51 @@ def _count_wrapped_lines(text, font_size_pt, max_width_px):
     return lines
 
 
+def _count_multiline_wrapped(text, font, max_width_px):
+    """Nhu _wrap_line_count nhung TON TRONG cac dau xuong dong "\\n" co san trong
+    text (moi doan giua 2 dau \\n duoc wrap rieng, dong trong tinh la 1 dong)."""
+    if not text:
+        return 0
+    total = 0
+    for seg in text.split("\n"):
+        if seg.strip() == "":
+            total += 1
+        else:
+            total += _wrap_line_count(seg, font, max_width_px)
+    return total
+
+
+def _count_wrapped_lines(text, font_size_pt, max_width_px):
+    font = _load_bold_font(round(font_size_pt * 96 / 72))
+    return max(1, _count_multiline_wrapped(text, font, max_width_px))
+
+
 def set_wrapped_row_height(ws, row, text, cols="ABCDEF", font_size_pt=INFO_ROW_FONT_SIZE):
     """Dat lai chieu cao dong `row` sao cho du hien thi het `text` sau khi wrap
     trong vung merge `cols`, tranh bi cat/de chong len dong ben duoi."""
     max_width_px = max(20, _merged_width_px(ws, cols) - 10)  # tru le trong o
     n_lines = _count_wrapped_lines(text, font_size_pt, max_width_px)
     ws.row_dimensions[row].height = BASE_ROW_HEIGHT * max(1, n_lines)
+
+
+def compute_product_row_height(ws, col, desc_text, note_text, min_height):
+    """Tinh chieu cao dong san pham can thiet de hien thi HET mo ta san pham
+    (font thuong) + ghi chu tinh trang hang (font nghieng, cach 1 dong trong)
+    trong cot `col`, khong bi cat/de len dong ben duoi. Luon >= min_height (de
+    du cho hinh anh san pham)."""
+    font_size_pt = ws[f"{col}{FIRST_PRODUCT_ROW}"].font.sz or 9
+    max_width_px = max(20, _merged_width_px(ws, col) - 10)
+
+    regular_font = _load_font("regular", round(font_size_pt * 96 / 72))
+    n_lines = _count_multiline_wrapped(desc_text, regular_font, max_width_px)
+
+    if note_text:
+        italic_font = _load_font("italic", round(font_size_pt * 96 / 72))
+        n_lines += 1 + _count_multiline_wrapped(note_text, italic_font, max_width_px)  # +1 = dong trong cach doan
+
+    line_height_pt = font_size_pt * 1.36  # ty le da kiem chung voi BASE_ROW_HEIGHT (15pt / 11pt)
+    needed = max(1, n_lines) * line_height_pt + 10  # +10 le tren/duoi o
+    return max(min_height, needed)
 
 
 def standardize_availability_note(raw):
@@ -363,7 +417,6 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
     # --- Dien du lieu san pham ---
     for idx, product in enumerate(products, start=1):
         row = FIRST_PRODUCT_ROW + idx - 1
-        ws.row_dimensions[row].height = ROW_HEIGHT_WITH_IMAGE
         ws[f"A{row}"] = idx
         ws[f"B{row}"] = product["code"]
         desc_text = product.get("description", "")
@@ -382,9 +435,15 @@ def build(config, tmp_dir="/tmp/bao_gia_images"):
         ws[f"H{row}"] = product["unit_price"]
         ws[f"I{row}"] = f"=H{row}*G{row}"
 
+        # Chieu cao dong PHAI du de hien het mo ta + ghi chu tinh trang hang
+        # (khong chi co dinh 170 nhu truoc - vi mo ta dai + co ghi chu se bi
+        # cat/de len dong "Tong cong" ben duoi neu chi dung 170 co dinh).
+        row_height = compute_product_row_height(ws, "D", desc_text, note_text, ROW_HEIGHT_WITH_IMAGE)
+        ws.row_dimensions[row].height = row_height
+
         img_path = maybe_download_image(product, tmp_dir)
         if img_path:
-            add_centered_image(ws, img_path, row, "C", IMG_WIDTH, IMG_HEIGHT, ROW_HEIGHT_WITH_IMAGE)
+            add_centered_image(ws, img_path, row, "C", IMG_WIDTH, IMG_HEIGHT, row_height)
 
     # --- Cong thuc khu vuc tong ket - LUON tinh dong theo vi tri thuc te sau khi
     # chen/xoa dong, khong con nhanh dac biet nua (vi gio luon xoa hoac chen dong
