@@ -65,15 +65,19 @@ def ascii_filename(name: str) -> str:
 
 
 def build_filename_base(customer_name: str, company: str) -> str:
-    """Ten file dang: DD.MM.YY_BG_<ten khach hang> - tieng Viet khong dau, GON
-    (khong gom ten cong ty nua vi ten cty thuong rat dai, lam ten file bi cat
-    ngan/hien thi loi tren Telegram, vd "...NG_MAI...". Neu khong co ten khach
-    (truong hop chi co MST) thi dung ten cong ty thay the. Dung gio VN (UTC+7)
+    """Ten file dang: DD.MM.YY_BG_<ten khach hang (khong dau)>_<ten cong ty
+    (khong dau)> - thong tin nao khong co thi BO QUA phan do (khong chen "_"
+    thua, khong dung gia tri mac dinh nhu "KhachHang"). Dung gio VN (UTC+7)
     vi server (Render) thuong chay theo gio UTC."""
     now_vn = datetime.utcnow() + timedelta(hours=7)
     date_str = now_vn.strftime("%d.%m.%y")
-    name_part = ascii_filename(customer_name) if customer_name else ascii_filename(company)
-    return f"{date_str}_BG_{name_part}"
+    parts = []
+    if customer_name and customer_name.strip():
+        parts.append(ascii_filename(customer_name))
+    if company and company.strip():
+        parts.append(ascii_filename(company))
+    name_part = "_".join(parts)
+    return f"{date_str}_BG_{name_part}" if name_part else f"{date_str}_BG"
 
 
 @app.get("/health")
