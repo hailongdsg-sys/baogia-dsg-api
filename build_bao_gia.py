@@ -242,8 +242,40 @@ def maybe_download_image(product, tmp_dir):
     os.makedirs(tmp_dir, exist_ok=True)
     fname = os.path.join(tmp_dir, f"{product['code'].replace(' ', '_').replace('/', '_')}.png")
     try:
-        resp = requests.get(url, timeout=20)
+        # MOI: nhieu trang (vd hoaphatsaigon.com) chan hotlink - tu choi/tra ve
+        # trang loi (HTML) thay vi anh that neu request khong co header giong
+        # trinh duyet that (Referer tu chinh trang do, User-Agent). Neu khong co
+        # 2 header nay, requests.get() van co the tra ve HTTP 200 nhung noi dung
+        # KHONG PHAI anh -> luu file .png "gia" gay loi crash khi Excel/PIL mo no.
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Referer": "https://hoaphatsaigon.com/",
+        }
+        resp = requests.get(url, timeout=20, headers=headers)
         resp.raise_for_status()
+
+        # MOI: kiem tra noi dung tai ve CO THUC SU LA ANH HOP LE khong (dung PIL
+        # doc thu, khong dua vao Content-Type header hay duoi file - vi co the bi
+        # sai/thieu). Neu khong phai anh that (vd bi tra ve trang HTML loi do chan
+        # hotlink, link hong, redirect sang trang khac...), bo qua anh cho dong
+        # nay thay vi luu file hong roi lam crash ca API o buoc chen anh vao Excel.
+        from PIL import Image as PILImage
+        import io
+        try:
+            with PILImage.open(io.BytesIO(resp.content)) as im:
+                im.verify()
+        except Exception:
+            print(
+                f"CANH BAO: noi dung tai ve tu {url} khong phai anh hop le "
+                f"(co the bi chan hotlink hoac link hong) - bo qua anh cho san pham "
+                f"{product.get('code')}, van tiep tuc tao bao gia.",
+                file=sys.stderr,
+            )
+            return None
+
         with open(fname, "wb") as f:
             f.write(resp.content)
         return fname
